@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useInstaller } from "./hooks/useInstaller";
 import { invoke } from "@tauri-apps/api/core";
 import { Box, ChevronDown, Download, Gamepad2, Settings, UserRound } from "lucide-react";
 
@@ -6,9 +7,11 @@ interface VersionList { latest_release: string; versions: { id: string; url: str
 interface JavaInstallation { path: string; version: string; major_version: number; vendor: string | null }
 
 function App() {
-  const [page, setPage] = useState<"play" | "settings">("play");
+  const [page, setPage] = useState<"play" | "settings" | "installations">("play");
+  const installer = useInstaller();
   const [latestRelease, setLatestRelease] = useState("");
   const [version, setVersion] = useState("");
+  const selectedInstall = installer.installations.find(item => item.version === version);
   const [versions, setVersions] = useState<VersionList["versions"]>([]);
   const [loading, setLoading] = useState(true);
   const [versionMessage, setVersionMessage] = useState("");
@@ -39,22 +42,6 @@ function App() {
   }
 
   useEffect(() => { void loadVersions(); void scanJava(); }, []);
-  const [status, setStatus] = useState("Ready to play");
-  const [launching, setLaunching] = useState(false);
-
-  async function handlePlay() {
-    setLaunching(true);
-    setStatus("Checking launcher services…");
-
-    try {
-      const message = await invoke<string>("launcher_status");
-      setStatus(message);
-    } catch {
-      setStatus("Launcher service unavailable");
-    } finally {
-      window.setTimeout(() => setLaunching(false), 650);
-    }
-  }
 
   return (
     <main className="shell">
@@ -66,7 +53,7 @@ function App() {
 
         <nav aria-label="Launcher navigation">
           <button onClick={() => setPage("play")} aria-current={page === "play" ? "page" : undefined} className={`nav-item ${page === "play" ? "active" : ""}`}><Gamepad2 size={19} /> Play</button>
-          <button className="nav-item" disabled title="Coming later"><Download size={19} /> Installations</button>
+          <button onClick={() => setPage("installations")} aria-current={page === "installations" ? "page" : undefined} className={`nav-item ${page === "installations" ? "active" : ""}`}><Download size={19} /> Installations</button>
           <button onClick={() => setPage("settings")} aria-current={page === "settings" ? "page" : undefined} className={`nav-item ${page === "settings" ? "active" : ""}`}><Settings size={19} /> Settings</button>
         </nav>
 
@@ -83,7 +70,7 @@ function App() {
             <p className="eyebrow">MINECRAFT: JAVA EDITION</p>
             <h1>Your next world<br />starts here.</h1>
           </div>
-          <div className="status-pill"><i /> {status}</div>
+          <div className="status-pill"><i /> {installer.checking ? "Checking installations…" : selectedInstall?.status === "installed" ? "Installed and ready" : "Ready to install"}</div>
         </header>
 
         <section className="hero">
@@ -105,15 +92,15 @@ function App() {
           <div className="version-wrap">
             <label htmlFor="version">VERSION</label>
             <div className="select-wrap">
-              <select id="version" disabled={loading || !versions.length} value={version} onChange={(event) => setVersion(event.target.value)}>
+              <select id="version" disabled={loading || !versions.length || !!installer.activeVersion} value={version} onChange={(event) => setVersion(event.target.value)}>
                 {!versions.length && <option value="">{loading ? "Loading releases…" : "No versions available"}</option>}
                 {versions.map((item) => <option key={item.id} value={item.id}>{item.id}{item.id === latestRelease ? " (Latest release)" : ""}</option>)}
               </select>
               <ChevronDown size={18} />
             </div>
           </div>
-          <button className="play-button" onClick={handlePlay} disabled={launching || loading || !version}>
-            {launching ? "PREPARING…" : "PLAY"}
+          <button className="play-button" onClick={() => void installer.install(version)} disabled={!!installer.activeVersion || installer.checking || loading || !version}>
+            {installer.activeVersion ? "WORKING…" : selectedInstall?.status === "installed" ? "PLAY" : selectedInstall ? "RESUME / REPAIR" : "INSTALL"}
           </button>
         </section>
 
@@ -122,6 +109,34 @@ function App() {
           <button onClick={() => void loadVersions()} disabled={loading}>Refresh versions</button>
         </section>
         </div>
+        <section className="environment" hidden={page !== "installations"} aria-label="Installations">
+          <h1>Installations</h1>
+          <p>Vanilla Minecraft files managed by Ember. Game launching comes in a later milestone.</p>
+          <button onClick={() => void installer.refresh().catch(() => {})} disabled={installer.checking || !!installer.activeVersion}>Recheck installations</button>
+          {installer.checking && <p role="status">Verifying installed files…</p>}
+          {!installer.checking && !installer.installations.length && <p>No installed versions yet. Select a release on Play and choose Install.</p>}
+          <ul className="installation-list">{installer.installations.map(item => <li key={item.version}>
+            <h2>Minecraft {item.version}</h2>
+            <p>Status: {installer.activeVersion === item.version ? "Installing / repairing" : item.status.replace(/_/g, " ")}</p>
+            <code>{item.location}</code>
+            {item.error && <p>{item.error}</p>}
+            <button onClick={() => void installer.install(item.version, true)} disabled={!!installer.activeVersion || installer.checking}>Repair / reverify {item.version}</button>
+          </li>)}</ul>
+        </section>
+        {(installer.message || installer.error || installer.activeVersion || installer.listError) && <section className="environment" aria-label="Installation progress">
+          <p role="status">{installer.message}</p>
+          {installer.progress && <>
+            <p>{installer.progress.version}: {installer.progress.stage}</p>
+            <progress aria-label="Install progress" max={100} value={installer.progress.percent} />
+            <p>{Math.floor(installer.progress.percent)}% · {installer.progress.completed_files} / {installer.progress.total_files} files</p>
+            <code>{installer.progress.file}</code>
+            {installer.progress.file_total != null && <p>{(installer.progress.file_bytes / 1048576).toFixed(1)} / {(installer.progress.file_total / 1048576).toFixed(1)} MB</p>}
+          </>}
+          {installer.error && <p role="alert">{installer.error}</p>}
+          {installer.listError && <p role="alert">Could not check installations: {installer.listError}</p>}
+          {installer.activeVersion && <button onClick={() => void installer.cancel()} disabled={installer.cancelling}>{installer.cancelling ? "Cancelling…" : "Cancel installation"}</button>}
+          {installer.cancelling && <p>A stalled network request may take up to 60 seconds to stop. Completed verified files are retained.</p>}
+        </section>}
         <section className="environment" hidden={page !== "settings"} aria-label="Settings">
           <h1>Settings</h1>
           <h2>Detected Java installations</h2>
@@ -131,7 +146,7 @@ function App() {
               <p>No Java found. Install Java or set JAVA_HOME, then scan again.</p>}
           </div>
           <button onClick={() => void scanJava()} disabled={javaLoading}>Scan for Java</button>
-          <p>Play checks launcher services only. Java compatibility and game launching come later.</p>
+          <p>Java is not required to download game files. Java compatibility and game launching come later.</p>
         </section>
 
         <footer>

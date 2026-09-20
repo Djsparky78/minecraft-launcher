@@ -57,86 +57,137 @@ Open the local URL printed by Vite. Browser mode is useful for styling, but the 
 ## Verification commands
 
 ```powershell
+npm install
 npm test
 npm run build
-cd src-tauri
-cargo check
-cd ..
+npx tsc --noEmit
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+cargo test --locked --workspace --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
 ```
 
-The test suite verifies version selection and confirms that the Play button invokes the `launcher_status` Rust command.
+The installer is a separate Rust crate, so its tests can run on Linux without
+Tauri's GTK/WebKit system libraries:
 
-## Current scope
+```powershell
+cargo test --locked --manifest-path src-tauri/Cargo.toml -p installer-core
+```
 
-This first milestone establishes the application shell. Microsoft authentication, Minecraft metadata, game installation, Java management, and process launching will be added in later milestones.
+## Vanilla installation (milestone 3)
+
+Select a release on Play and click **Install**. Rust resolves its URL and SHA-1
+from the official Mojang version manifest, verifies the version JSON, then installs:
+
+- The client JAR and Windows libraries selected by Mojang's ordered allow/disallow
+  rules (OS, version, architecture, and vanilla feature flags).
+- The asset index and deduplicated asset objects.
+- Required Windows native JARs and their extracted files, honoring exclusions.
+- The client logging configuration when declared.
+- Legacy virtual assets and per-version resources layouts when the index requests them.
+
+The installer handles both old classifier-based native metadata and modern
+standalone native artifacts. Native architecture follows the launcher build
+(x64, x86, or ARM64), not a guessed Java installation. Old versions without ARM64
+natives return an error on an ARM64 launcher; use an x64 build/runtime for them.
+Installation commands currently support Windows only. Java is not needed to
+install files; launching and runtime compatibility selection come later.
+
+### Storage
+
+Game files live under **`%LOCALAPPDATA%\com.ember.launcher\game`** on Windows,
+using Tauri's application-local data directory. Nothing is downloaded into the
+Git checkout or the user's existing `.minecraft` directory.
+
+| Directory | Contents |
+| --- | --- |
+| `versions/<id>/` | Verified version JSON, client JAR, legacy per-version resources |
+| `libraries/` | Shared Maven library JARs and native archives |
+| `assets/indexes/` | Verified asset indexes |
+| `assets/objects/` | Shared content-addressed asset objects |
+| `assets/virtual/` | Legacy asset layouts |
+| `assets/log_configs/` | Official client logging configuration |
+| `natives/<id>/` | Extracted natives for that version |
+| `launcher/installations/` | Completion/error records and verified file hashes |
+| `launcher/partial/` | Temporary downloads and staged native extraction |
+| `launcher/install.lock` | Cross-process installer lock |
+
+The Installations page shows version ID, status, storage location, and a
+**Repair / reverify** button. Startup, recheck, and Play verify installed files
+on disk using hashes, so checking a large library can take some time. Play becomes
+available after installation, but only reports readiness. It never starts Minecraft.
+
+### Verification, repair, and interrupted work
+
+Files are streamed to temporary files, checked against Mojang's SHA-1 and size
+where supplied, and only then published. Files that already verify are reused.
+Repair downloads missing/corrupt files and rebuilds the native directory from
+verified archives. It does not redownload healthy files. Every published file,
+including extracted natives, is recorded with a hash for installed-state checks.
+The installation is marked complete only after all files and extraction succeed.
+
+Progress shows stage, current file, file counts, per-file bytes, and overall
+completion. Overall percent reserves the final portion for legacy layouts,
+native extraction, and saving completion; it is not a bandwidth estimate.
+
+Only one installation/repair runs at a time, including across app processes, to
+protect shared libraries/assets as well as prevent duplicate version installs.
+Cancel keeps completed verified downloads. An in-flight stalled network request
+can take up to its 60-second timeout to stop. Partial files are not reused; the
+next installation clears stale staging and resumes by verifying completed files.
+Network errors, hash mismatches, permission failures, and disk/write errors appear
+in the UI. A file-size disk-space check runs before downloads, and extraction/write
+errors are also reported. Retry with Install or Repair after correcting the cause.
+Interrupted/crashed installs are shown as incomplete, never ready.
+
+Installation and repair can reuse files offline when both manifests and all
+required downloads are already cached. Missing files still need a network
+connection. No authentication, Fabric, Forge, mods, cosmetics, or Minecraft
+process launching are implemented.
+
+## Version cache and Java Settings
+
+The release list comes from
+`https://piston-meta.mojang.com/mc/game/version_manifest_v2.json`. It displays only
+stable releases and labels Mojang's `latest.release`. Refresh preserves selection.
+The last validated manifest is cached at
+`%LOCALAPPDATA%\com.ember.launcher\version-manifest.json`; network failures fall
+back to that cache with a warning. Without a usable cache, an error and retry
+control are shown. Browser-only mode cannot call the native commands.
+
+Settings retains Java discovery from JAVA_HOME, absolute PATH entries, common
+Windows vendor folders, and `%USERPROFILE%\.jdks`. It displays major/full version,
+vendor, and executable path. Probes use `-XshowSettings:properties -version`, a
+three-second timeout, and no console window. Obvious PATH shims are resolved
+through `java.home` where a real executable exists; distinct runtimes are kept.
+Display paths remove `\\?\` prefixes while preserving UNC paths. Manual Java
+selection is not implemented; `java::inspect(path)` remains reusable for it later.
+
+## Windows checklist before merging PR #3
+
+1. Close the launcher. Fetch and switch to `codex/vanilla-installer`, then run the
+   verification commands above and `npm run tauri:dev`.
+2. Install a small/older release first, such as **1.6.4**, then a modern release
+   such as **1.20.1**. Watch progress. Check the folders above, the ready state,
+   native files, and version/status/location on Installations.
+3. Click Play after installation. It must only report readiness, with no game
+   process. Run Repair and confirm healthy client/library files keep their
+   modification times (native files are intentionally rebuilt).
+4. Close the launcher, delete that version's client JAR, and reopen. It should
+   show repair needed. Repair must restore the JAR. Repeat by replacing a library
+   JAR's contents, then an extracted DLL; each should be detected and repaired.
+5. Cancel an installation partway through, then resume. Completed verified files
+   should be reused. Try double-clicking Install and opening another launcher
+   instance: concurrent installs should be rejected cleanly.
+6. Optional offline check: temporarily block only the launcher in Windows Firewall
+   rather than disconnecting Ethernet. Restart and confirm the cached selector and
+   installed list work. A missing-file repair should fail clearly and retry after
+   unblocking. The fixture tests cover offline reuse without a PC-wide network change.
+7. Open Settings, check Java paths and duplicate cleanup, then run
+   `npm run tauri:build` and repeat a basic install/repair in the packaged app.
+
+Windows native runtime, real disk-full/permission conditions, packaged-app IPC,
+and a complete official game installation require manual validation. Automated
+tests use tiny local HTTP fixtures and official version JSON snapshots; they do
+not download a complete game or launch it.
 
 This project is not affiliated with Mojang Studios or Microsoft.
-
-## Minecraft releases and Java discovery
-
-The desktop app fetches the official Mojang manifest at
-`https://piston-meta.mojang.com/mc/game/version_manifest_v2.json` and lists only
-`release` entries in Mojang's newest-first order. Snapshots, Forge and placeholder
-versions are excluded. Refresh preserves your selection when it still exists.
-Requests time out after 15 seconds. A validated manifest is saved atomically to
-Tauri's app cache directory (`%LOCALAPPDATA%\com.ember.launcher\version-manifest.json`
-on Windows). If Mojang is unavailable, the saved releases appear with a warning.
-A missing or corrupt cache produces a retryable error. A cache write failure does
-not prevent using newly fetched releases.
-
-Java detection runs independently and returns all working installations found via
-`JAVA_HOME`, absolute PATH entries, common Java vendor directories under Program
-Files / Program Files (x86) / LocalAppData, and `%USERPROFILE%\.jdks`. It probes
-`java.exe -version` without opening console windows, deduplicates resolved paths,
-and skips failed probes or probes exceeding three seconds. Both legacy Java 8
-and modern OpenJDK version strings are supported. Arbitrary custom locations
-must be added to PATH or JAVA_HOME; registry-only installations and Minecraft's
-bundled runtimes are not exhaustively searched. Java compatibility with the
-selected Minecraft release is not evaluated yet.
-
-The `versions` and `java` Rust modules contain the discovery logic; thin Tauri
-commands expose typed results to React. Browser-only mode cannot call these
-commands. Play still calls only the existing status command and starts no game.
-
-### Windows acceptance checklist
-
-1. Run `npm install`, `npm test`, `npm run build`, and `npx tsc --noEmit`.
-2. Run `cargo check --locked --manifest-path src-tauri/Cargo.toml` and
-   `cargo test --locked --manifest-path src-tauri/Cargo.toml`.
-3. Run `npm run tauri:dev`. Confirm real releases load and you can change selection.
-4. Refresh and confirm the selection stays. Snapshots and Forge must not appear.
-5. After one successful refresh, disconnect the network and refresh again. Within
-   15 seconds, saved versions should appear with an offline warning. Restart the
-   desktop app offline to verify the cache survives restarts.
-6. Close the app and temporarily rename the cache file, then reopen offline.
-   Confirm a useful error and disabled Play button. Reconnect and refresh to recover.
-   Repeat with invalid JSON in the cache to check corrupt-cache recovery.
-7. Confirm Java versions and full executable paths match each installation's
-   `java.exe -version`. Test PATH, JAVA_HOME, a common vendor folder, and multiple
-   installations. Scan again should not duplicate a resolved executable.
-8. Test with no discoverable Java (or a clean Windows account). Confirm the no-Java
-   message, and that scanning remains usable after installing/configuring Java.
-9. Press Play and confirm only `Launcher services ready` appears. No game starts.
-10. Run `npm run tauri:build` and repeat the online/offline and Java checks in the
-    packaged app. Verify long Java paths remain readable and the window scrolls.
-
-### Milestone 2 additions
-
-Open **Settings** in the sidebar to see all detected Java installations, including
-major version, vendor (when reported), full version, and executable path. Use
-**Scan for Java** to retry detection. The Play page and Settings retain their state
-when switching between them. Java probing uses `-XshowSettings:properties -version`
-to obtain vendor and version information; Java 8's `1.8` format maps to major 8.
-The Rust `java::inspect(path)` function separates executable validation from
-candidate discovery so a later manual Java picker can reuse it. Manual selection
-and Java compatibility decisions are not part of this milestone.
-
-The default selection and **Latest release** label use Mojang's `latest.release`
-field, including when using a saved manifest offline. No snapshot or loader
-entries are synthesized. An old cache without the latest-release field must be
-refreshed online once.
-
-For Windows acceptance, also confirm that the latest release is clearly labeled,
-Settings opens and returns to Play without losing selection, Java 8 displays
-major 8, and the vendor matches `java -XshowSettings:properties -version`.
