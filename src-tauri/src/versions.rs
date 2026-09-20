@@ -4,7 +4,12 @@ use std::{path::Path, time::Duration};
 const MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 #[derive(Deserialize, Serialize)]
 struct Manifest {
+    latest: Latest,
     versions: Vec<Version>,
+}
+#[derive(Deserialize, Serialize)]
+struct Latest {
+    release: String,
 }
 #[derive(Deserialize, Serialize)]
 pub struct Version {
@@ -15,6 +20,7 @@ pub struct Version {
 }
 #[derive(Serialize)]
 pub struct VersionList {
+    latest_release: String,
     versions: Vec<Version>,
     cached: bool,
     warning: Option<String>,
@@ -28,10 +34,18 @@ fn parse(text: &str) -> Result<Manifest, String> {
     {
         return Err("Manifest contains no release versions".into());
     }
+    if !manifest
+        .versions
+        .iter()
+        .any(|v| v.kind == "release" && v.id == manifest.latest.release)
+    {
+        return Err("Manifest latest release is missing from releases".into());
+    }
     Ok(manifest)
 }
 fn releases(manifest: Manifest, cached: bool, warning: Option<String>) -> VersionList {
     VersionList {
+        latest_release: manifest.latest.release,
         versions: manifest
             .versions
             .into_iter()
@@ -105,11 +119,11 @@ mod tests {
     use super::*;
     #[test]
     fn filters_snapshots_and_rejects_invalid_data() {
-        let text = r#"{"versions":[{"id":"1.21","type":"release","url":"https://example.com"},{"id":"snapshot","type":"snapshot","url":"https://example.com"}]}"#;
+        let text = r#"{"latest":{"release":"1.21"},"versions":[{"id":"1.21","type":"release","url":"https://example.com"},{"id":"snapshot","type":"snapshot","url":"https://example.com"}]}"#;
         let list = releases(parse(text).unwrap(), false, None);
         assert_eq!(list.versions.len(), 1);
         assert_eq!(list.versions[0].id, "1.21");
-        assert!(parse(r#"{"versions":[]}"#).is_err());
+        assert!(parse(r#"{"latest":{"release":"1.21"},"versions":[]}"#).is_err());
         assert!(parse("invalid").is_err());
     }
 }
@@ -118,6 +132,37 @@ mod tests {
 mod cache_tests {
     use super::*;
     #[tokio::test]
+    async fn successful_fetch_persists_latest_release_for_offline_use() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).unwrap();
+            let body = r#"{"latest":{"release":"1.21"},"versions":[{"id":"1.20","type":"release","url":"https://example.com"},{"id":"1.21","type":"release","url":"https://example.com"}]}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let online = load_from(dir.path(), &url).await.unwrap();
+        server.join().unwrap();
+        assert!(!online.cached);
+        assert_eq!(online.latest_release, "1.21");
+        assert_eq!(online.versions.len(), 2);
+        let offline = load_from(dir.path(), "http://127.0.0.1:0").await.unwrap();
+        assert!(offline.cached);
+        assert_eq!(offline.latest_release, "1.21");
+    }
+    #[tokio::test]
     async fn unavailable_server_uses_cache_and_rejects_corruption() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("version-manifest.json");
@@ -125,7 +170,7 @@ mod cache_tests {
         assert!(load_from(dir.path(), offline).await.is_err());
         std::fs::write(
             &path,
-            r#"{"versions":[{"id":"1.21","type":"release","url":"https://example.com"}]}"#,
+            r#"{"latest":{"release":"1.21"},"versions":[{"id":"1.21","type":"release","url":"https://example.com"}]}"#,
         )
         .unwrap();
         let result = load_from(dir.path(), offline).await.unwrap();

@@ -120,3 +120,23 @@ commands. Play still calls only the existing status command and starts no game.
 9. Press Play and confirm only `Launcher services ready` appears. No game starts.
 10. Run `npm run tauri:build` and repeat the online/offline and Java checks in the
     packaged app. Verify long Java paths remain readable and the window scrolls.
+
+### Milestone 2 additions
+
+Open **Settings** in the sidebar to see all detected Java installations, including
+major version, vendor (when reported), full version, and executable path. Use
+**Scan for Java** to retry detection. The Play page and Settings retain their state
+when switching between them. Java probing uses `-XshowSettings:properties -version`
+to obtain vendor and version information; Java 8's `1.8` format maps to major 8.
+The Rust `java::inspect(path)` function separates executable validation from
+candidate discovery so a later manual Java picker can reuse it. Manual selection
+and Java compatibility decisions are not part of this milestone.
+
+The default selection and **Latest release** label use Mojang's `latest.release`
+field, including when using a saved manifest offline. No snapshot or loader
+entries are synthesized. An old cache without the latest-release field must be
+refreshed online once.
+
+For Windows acceptance, also confirm that the latest release is clearly labeled,
+Settings opens and returns to Play without losing selection, Java 8 displays
+major 8, and the vendor matches `java -XshowSettings:properties -version`.

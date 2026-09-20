@@ -9,6 +9,8 @@ use std::{
 pub struct JavaInstallation {
     path: String,
     version: String,
+    major_version: u32,
+    vendor: Option<String>,
 }
 fn parse_version(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
@@ -21,6 +23,54 @@ fn parse_version(text: &str) -> Option<String> {
         } else {
             None
         }
+    })
+}
+fn major_version(version: &str) -> Option<u32> {
+    let normalized = version.strip_prefix("1.").unwrap_or(version);
+    normalized
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+        .filter(|v| *v > 0)
+}
+fn property(text: &str, name: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once('=')?;
+        (key.trim() == name && !value.trim().is_empty()).then(|| value.trim().to_string())
+    })
+}
+// Independent of discovery so a future manual path can use the same validation.
+pub async fn inspect(path: &Path) -> Option<JavaInstallation> {
+    let path = path.canonicalize().ok()?;
+    if !path.is_file() {
+        return None;
+    }
+    let mut command = tokio::process::Command::new(&path);
+    command
+        .args(["-XshowSettings:properties", "-version"])
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let output = tokio::time::timeout(Duration::from_secs(3), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let version = property(&text, "java.version").or_else(|| parse_version(&text))?;
+    Some(JavaInstallation {
+        path: path.to_string_lossy().into_owned(),
+        major_version: major_version(&version)?,
+        vendor: property(&text, "java.vendor"),
+        version,
     })
 }
 fn add_root(root: &Path, candidates: &mut Vec<PathBuf>) {
@@ -89,30 +139,8 @@ pub async fn detect() -> Vec<JavaInstallation> {
         if !seen.insert(key) {
             continue;
         }
-        let mut command = tokio::process::Command::new(&path);
-        command
-            .arg("-version")
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(3), command.output()).await
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let text = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        );
-        if let Some(version) = parse_version(&text) {
-            found.push(JavaInstallation {
-                path: path.to_string_lossy().into_owned(),
-                version,
-            });
+        if let Some(installation) = inspect(&path).await {
+            found.push(installation);
         }
     }
     found
@@ -122,6 +150,14 @@ mod tests {
     use super::*;
     #[test]
     fn reads_legacy_and_modern_java() {
+        assert_eq!(major_version("1.8.0_421"), Some(8));
+        assert_eq!(major_version("21.0.4"), Some(21));
+        assert_eq!(major_version("25-ea"), Some(25));
+        assert_eq!(major_version("bad"), None);
+        assert_eq!(
+            property("    java.vendor = Eclipse Adoptium", "java.vendor"),
+            Some("Eclipse Adoptium".into())
+        );
         assert_eq!(
             parse_version("java version \"1.8.0_421\""),
             Some("1.8.0_421".into())
