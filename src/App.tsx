@@ -1,11 +1,44 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Box, ChevronDown, Download, Gamepad2, Settings, UserRound } from "lucide-react";
 
-const versions = ["Latest release", "1.21.4", "1.20.1 Forge"];
+interface VersionList { latest_release: string; versions: { id: string; url: string }[]; cached: boolean; warning: string | null }
+interface JavaInstallation { path: string; version: string; major_version: number; vendor: string | null }
 
 function App() {
-  const [version, setVersion] = useState(versions[0]);
+  const [page, setPage] = useState<"play" | "settings">("play");
+  const [latestRelease, setLatestRelease] = useState("");
+  const [version, setVersion] = useState("");
+  const [versions, setVersions] = useState<VersionList["versions"]>([]);
+  const [loading, setLoading] = useState(true);
+  const [versionMessage, setVersionMessage] = useState("");
+  const [java, setJava] = useState<JavaInstallation[]>([]);
+  const [javaLoading, setJavaLoading] = useState(true);
+  const [javaError, setJavaError] = useState("");
+
+  async function loadVersions() {
+    setLoading(true);
+    setVersionMessage("");
+    try {
+      const result = await invoke<VersionList>("minecraft_versions");
+      setVersions(result.versions);
+      setLatestRelease(result.latest_release);
+      setVersion(current => result.versions.some(v => v.id === current) ? current : result.latest_release);
+      setVersionMessage(result.warning ?? (result.cached ? "Showing cached versions" : "Versions updated from Mojang"));
+    } catch (error) {
+      setVersionMessage(String(error));
+    } finally { setLoading(false); }
+  }
+
+  async function scanJava() {
+    setJavaLoading(true);
+    setJavaError("");
+    try { setJava(await invoke<JavaInstallation[]>("detect_java")); }
+    catch (error) { setJavaError(String(error)); }
+    finally { setJavaLoading(false); }
+  }
+
+  useEffect(() => { void loadVersions(); void scanJava(); }, []);
   const [status, setStatus] = useState("Ready to play");
   const [launching, setLaunching] = useState(false);
 
@@ -32,9 +65,9 @@ function App() {
         </div>
 
         <nav aria-label="Launcher navigation">
-          <button className="nav-item active"><Gamepad2 size={19} /> Play</button>
-          <button className="nav-item"><Download size={19} /> Installations</button>
-          <button className="nav-item"><Settings size={19} /> Settings</button>
+          <button onClick={() => setPage("play")} aria-current={page === "play" ? "page" : undefined} className={`nav-item ${page === "play" ? "active" : ""}`}><Gamepad2 size={19} /> Play</button>
+          <button className="nav-item" disabled title="Coming later"><Download size={19} /> Installations</button>
+          <button onClick={() => setPage("settings")} aria-current={page === "settings" ? "page" : undefined} className={`nav-item ${page === "settings" ? "active" : ""}`}><Settings size={19} /> Settings</button>
         </nav>
 
         <div className="account">
@@ -44,6 +77,7 @@ function App() {
       </aside>
 
       <section className="content">
+        <div hidden={page !== "play"}>
         <header>
           <div>
             <p className="eyebrow">MINECRAFT: JAVA EDITION</p>
@@ -71,15 +105,33 @@ function App() {
           <div className="version-wrap">
             <label htmlFor="version">VERSION</label>
             <div className="select-wrap">
-              <select id="version" value={version} onChange={(event) => setVersion(event.target.value)}>
-                {versions.map((item) => <option key={item}>{item}</option>)}
+              <select id="version" disabled={loading || !versions.length} value={version} onChange={(event) => setVersion(event.target.value)}>
+                {!versions.length && <option value="">{loading ? "Loading releases…" : "No versions available"}</option>}
+                {versions.map((item) => <option key={item.id} value={item.id}>{item.id}{item.id === latestRelease ? " (Latest release)" : ""}</option>)}
               </select>
               <ChevronDown size={18} />
             </div>
           </div>
-          <button className="play-button" onClick={handlePlay} disabled={launching}>
+          <button className="play-button" onClick={handlePlay} disabled={launching || loading || !version}>
             {launching ? "PREPARING…" : "PLAY"}
           </button>
+        </section>
+
+        <section className="environment" aria-label="Launcher environment">
+          <p role="status">{loading ? "Loading Minecraft releases…" : versionMessage}</p>
+          <button onClick={() => void loadVersions()} disabled={loading}>Refresh versions</button>
+        </section>
+        </div>
+        <section className="environment" hidden={page !== "settings"} aria-label="Settings">
+          <h1>Settings</h1>
+          <h2>Detected Java installations</h2>
+          <div aria-live="polite">
+            {javaLoading ? <p>Detecting Java…</p> : javaError ? <p role="alert">{javaError}</p> : java.length ?
+              <ul>{java.map(item => <li key={item.path}><strong>Java {item.major_version}</strong><span> · {item.vendor ?? "Unknown vendor"} · {item.version}</span><code>{item.path}</code></li>)}</ul> :
+              <p>No Java found. Install Java or set JAVA_HOME, then scan again.</p>}
+          </div>
+          <button onClick={() => void scanJava()} disabled={javaLoading}>Scan for Java</button>
+          <p>Play checks launcher services only. Java compatibility and game launching come later.</p>
         </section>
 
         <footer>

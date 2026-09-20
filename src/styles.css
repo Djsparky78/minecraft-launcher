@@ -7,7 +7,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 760px; min-height: 600px; overflow: hidden; }
+body { margin: 0; min-width: 760px; min-height: 600px; overflow-x: hidden; overflow-y: auto; }
 button, select { font: inherit; }
 
 .shell {
@@ -132,3 +132,11 @@ footer { display: flex; justify-content: space-between; margin-top: 16px; color:
   .account > div:last-child { display: none; }
   .content { padding-inline: 26px; }
 }
+
+.environment { margin-top: 20px; padding: 18px; border: 1px solid #334139; border-radius: 14px; }
+.environment p { font-size: 13px; line-height: 1.5; }
+.environment code { display: block; overflow-wrap: anywhere; margin: 6px 0 12px; }
+.environment button { padding: 8px 12px; cursor: pointer; }
+button:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
+
+.content { min-width: 0; }
