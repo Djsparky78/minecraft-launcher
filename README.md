@@ -202,3 +202,163 @@ x64 to `amd64`, x86 to `x86`, and ARM64 to `aarch64`, including emulated x64 app
 on ARM64 Windows. Detection failures report the failed API or NTSTATUS rather
 than silently guessing a version. Windows CI runs a live detection smoke test
 as well as platform-independent formatting and architecture tests.
+
+## Milestone 4: Microsoft account sign-in (Windows)
+
+Settings now has **Sign in with Microsoft**, **Cancel sign-in**, **Sign out**, and
+**Retry saved sign-in**. The sidebar shows the verified Minecraft username after
+login; Settings also shows the profile UUID. Installation, repair, versions,
+manifest caching, and Java detection work without signing in. Minecraft process
+launching is still intentionally unavailable (milestone 5).
+
+### Register your own Microsoft application
+
+You must supply your own application (client) ID. Ember includes no default ID,
+client secret, or credentials from another launcher. The client ID is public;
+your Microsoft password, authorization code, and tokens are not configuration.
+
+1. Open the [Microsoft Entra admin center](https://entra.microsoft.com/), choose
+   the directory where you can register applications, and open **Identity / Entra
+   ID > Applications > App registrations > New registration**. If your account
+   cannot create app registrations, obtain access to a directory where you have
+   that permission. This is a developer setup step, not a Minecraft account issue.
+2. Name it **Ember Launcher**. Choose **Personal Microsoft accounts only**. If that
+   option is unavailable, **Accounts in any organizational directory and personal
+   Microsoft accounts** also supports the personal accounts Ember uses. Do not
+   choose an organizational-accounts-only audience.
+3. Register the application and copy **Application (client) ID** from Overview.
+   Do not use Object ID or Directory (tenant) ID.
+4. Open **Authentication > Add a platform > Mobile and desktop applications**.
+   Add the custom redirect URI **`http://localhost`** and save. Keep this redirect
+   under the native/mobile-and-desktop platform, not Web or SPA. Do not register
+   duplicate localhost redirects on different platforms or ports. Ember binds an
+   available loopback port before opening your browser, then uses
+   `http://localhost:<port>/`; Microsoft ignores the port when matching localhost
+   native redirects. No fixed port, public callback server, or DNS setup is needed.
+5. Under Authentication's advanced settings, enable **Allow public client flows**
+   and save. Leave implicit access-token/ID-token issuance disabled. Do **not**
+   create a client secret or certificate for Ember.
+6. Ember requests **`XboxLive.signin offline_access`** at sign-in using the
+   `consumers` Microsoft identity endpoint. Grant the requested consent in your
+   system browser. Ember does not need Microsoft Graph User.Read; Graph alone
+   does not provide Xbox/Minecraft access. If your directory restricts consent,
+   resolve that policy with its administrator. Do not substitute another app ID
+   to work around a registration or consent error.
+7. **Minecraft API approval is a separate step.** New application IDs may be
+   rejected by Minecraft Services even after Microsoft and Xbox login succeed.
+   Submit your application/client ID and accurate app details through the
+   [Minecraft application review form](https://aka.ms/mce-reviewappid) and follow
+   Microsoft's current requirements. Approval is controlled by Microsoft, not
+   Ember. If the form is unavailable or your app is rejected, contact Minecraft
+   support; do not borrow another launcher's ID. Ember reports this possibility
+   when Minecraft rejects the login exchange.
+
+Reference documentation:
+- [Microsoft authorization-code flow and PKCE](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)
+- [Microsoft desktop app configuration](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-desktop-app-configuration)
+- [Microsoft localhost redirect rules](https://learn.microsoft.com/en-us/entra/identity-platform/reply-url#localhost-exceptions)
+- [Minecraft API approval guidance from minecraft-launcher-lib](https://github.com/JakobDev/minecraft-launcher-lib/blob/master/doc/tutorial/microsoft_login.rst)
+
+### Configure Ember on your Windows PC
+
+For development, open PowerShell in your checkout and set the public client ID
+before starting Ember. Replace the placeholder with your actual GUID:
+
+```powershell
+cd "$env:USERPROFILE\EmberLauncher"
+git fetch origin
+git switch codex/microsoft-auth
+git pull --ff-only origin codex/microsoft-auth
+npm install
+$env:EMBER_MICROSOFT_CLIENT_ID = "PASTE-YOUR-APPLICATION-CLIENT-ID-HERE"
+npm run tauri:dev
+```
+
+The environment variable lasts for this PowerShell session and takes priority
+over the config file. A `.env` file is not automatically loaded by the Rust
+backend. Never put tokens or passwords in Vite variables.
+
+For persistent configuration, including packaged builds, use
+**`%APPDATA%\com.ember.launcher\auth.json`** (Roaming AppData, separate from Local
+AppData game downloads). This file contains only the public client ID:
+
+```powershell
+$emberConfigDir = Join-Path $env:APPDATA "com.ember.launcher"
+New-Item -ItemType Directory -Force $emberConfigDir | Out-Null
+$emberConfig = @{ microsoft_client_id = "PASTE-YOUR-APPLICATION-CLIENT-ID-HERE" } | ConvertTo-Json
+[System.IO.File]::WriteAllText((Join-Path $emberConfigDir "auth.json"), $emberConfig)
+```
+
+Restart Ember after changing the client ID. Sign out before changing IDs; saved
+credentials are isolated by client ID. To remove an old ID's credential later,
+use Windows **Credential Manager > Windows Credentials > Generic Credentials**
+and remove its Ember entry (service `com.ember.launcher.microsoft`). Do not share
+credential exports, callback URLs, tokens, or network captures.
+
+### Security and session behavior
+
+- Rust performs Microsoft authorization code + **S256 PKCE**, Xbox Live, XSTS,
+  Minecraft login, entitlement/license verification, and profile lookup.
+- The normal browser handles Microsoft passwords and MFA. Ember does not embed
+  a Microsoft login page or receive a password. No client secret is used.
+- The short-lived callback listener binds only IPv4/IPv6 loopback. It checks the
+  HTTP method, exact callback path and Host/port, one random state value, and one
+  code/error value. Invalid callbacks cannot consume a login. Sign-in times out
+  after three minutes; cancellation closes the listener and drops pending work.
+- Authentication requests use HTTPS with redirects disabled and bounded
+  responses/timeouts. Provider response bodies, codes, and tokens are not logged
+  or returned as errors. The webview's CSP/permissions are unchanged.
+- Only the Microsoft refresh credential is persisted, using **Windows Credential
+  Manager** through `keyring`'s Windows native backend. Access tokens stay in Rust
+  memory. No tokens are written to JSON, the repository, or browser storage.
+  There is no plain-text fallback; secure-store failures are shown to the user.
+- Startup refreshes the saved Microsoft credential and repeats Xbox/Minecraft
+  verification. While Ember is open, account checks run every minute; tokens
+  within two minutes of expiry are refreshed. Rotated refresh credentials are
+  saved before further network requests. Revoked credentials require sign-in.
+- Failed account verification never exposes a playable profile. A network failure
+  retains the saved credential for retry but does not grant offline account
+  access. Downloaded game files and cached versions remain usable.
+- Sign-out cancels pending auth, clears in-memory account/token state, and deletes
+  the saved refresh credential. It does not clear your browser's Microsoft
+  cookies or revoke consent globally. Use Microsoft's account permissions page
+  if you also want to revoke the application's grant.
+- Authentication supports one account at a time and Windows secure storage in
+  this milestone. Other platforms report secure storage unavailable rather than
+  storing secrets insecurely. Rust secrets have no Debug/Serialize implementation
+  and owned secret buffers are zeroized on drop; HTTP/JSON dependencies may make
+  transient in-memory copies. This is not a guarantee against a compromised OS.
+
+### Windows acceptance checklist before merging PR #4
+
+1. Configure your client ID, run the commands above, open **Settings**, and choose
+   **Sign in with Microsoft**. Confirm it opens your normal browser. Sign in with
+   a personal Microsoft account that has Minecraft Java access and an existing
+   Java profile. Finish consent/MFA. Do not paste the callback URL into chat.
+2. Return to Ember. Confirm your Minecraft username replaces Guest player and
+   Settings shows the correct username and 32-character UUID. It should explicitly
+   report verified Java Edition access. Play still must not launch Minecraft.
+3. Close Ember, press Ctrl+C in its terminal if needed, and run `npm run tauri:dev`
+   again from the same configured shell. Confirm the session restores without a
+   browser prompt. This exercises an actual refresh-token exchange on restart.
+4. Sign out, restart, and confirm the account does not restore. Sign in again;
+   Microsoft may remember you in the browser, which is expected.
+5. Start sign-in, then cancel in Ember. Confirm the UI becomes usable. Also try
+   declining consent and closing the browser without completing sign-in (wait
+   up to three minutes or cancel in Ember). An old callback must not sign you in.
+6. If available, test an account without Java access, an account without an Xbox
+   profile, and an expired/revoked consent grant. Confirm a useful error, no
+   authenticated/playable profile, and the ability to retry or sign out. These
+   conditions are covered by mocked tests but need real account acceptance tests.
+7. Temporarily block Ember in Windows Firewall, restart, and check the saved-login
+   network error. Restore access, choose **Retry saved sign-in**, and verify it
+   recovers. Do not delete your saved credential merely to test a network outage.
+8. Confirm version selection/cache, Java scanning, Minecraft 1.20.1 installation,
+   rechecking, and repair still work. Finally run `npm run tauri:build` and repeat
+   sign-in/restart/sign-out using the packaged app and persistent auth.json.
+
+Automated tests use fake credentials/provider responses plus an isolated real
+Windows Credential Manager round-trip in CI. They never sign into a real account.
+Live Microsoft consent, application approval, account ownership/subscription
+variants, MFA/child-account restrictions, browser/firewall behavior, and packaged
+interactive sign-in require your Windows acceptance testing.

@@ -16,6 +16,7 @@ beforeEach(() => {
       if (versionError) throw "Network unavailable";
       return {latest_release:"1.21",versions:[{id:"1.21",url:"a"},{id:"1.20.1",url:"b"}],cached:false,warning:null};
     }
+    if (command === "auth_restore") return {status:"signed_out", configured:false, profile:null, message:"Configure Microsoft sign-in"};
     if (command === "detect_java") return [{path:"C:\\Java\\bin\\java.exe",version:"21.0.4",major_version:21,vendor:"Eclipse Adoptium"}];
     if (command === "installed_versions") return [...list];
     if (command === "install_version") {

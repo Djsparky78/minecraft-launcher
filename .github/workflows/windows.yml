@@ -1,4 +1,4 @@
-name: Windows build and installer tests
+name: Windows build, installer and authentication tests
 on:
   pull_request:
     branches: [main]
@@ -21,6 +21,8 @@ jobs:
       - run: npx tsc --noEmit
       - name: Exercise native Windows version detection
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p installer-core platform::tests -- --nocapture
+      - name: Exercise Windows secure credential storage and authentication
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p auth-core
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo test --locked --workspace --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri:build -- --no-bundle

@@ -1,3 +1,5 @@
+import { useAccount } from "./hooks/useAccount";
+import { AccountSettings } from "./components/AccountSettings";
 import { useEffect, useState } from "react";
 import { useInstaller } from "./hooks/useInstaller";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,6 +11,7 @@ interface JavaInstallation { path: string; version: string; major_version: numbe
 function App() {
   const [page, setPage] = useState<"play" | "settings" | "installations">("play");
   const installer = useInstaller();
+  const auth = useAccount();
   const [latestRelease, setLatestRelease] = useState("");
   const [version, setVersion] = useState("");
   const selectedInstall = installer.installations.find(item => item.version === version);
@@ -59,7 +62,8 @@ function App() {
 
         <div className="account">
           <div className="avatar"><UserRound size={19} /></div>
-          <div><strong>Guest player</strong><span>Offline mode</span></div>
+          <div><strong>{auth.account.profile?.name ?? "Guest player"}</strong><span>{auth.account.status === "signed_in" ? "Minecraft account" : "Not signed in"}</span>
+            <button className="account-link" onClick={() => setPage("settings")}>{auth.account.profile ? "Manage account" : "Microsoft sign-in"}</button></div>
         </div>
       </aside>
 
@@ -139,6 +143,7 @@ function App() {
         </section>}
         <section className="environment" hidden={page !== "settings"} aria-label="Settings">
           <h1>Settings</h1>
+          <AccountSettings auth={auth} />
           <h2>Detected Java installations</h2>
           <div aria-live="polite">
             {javaLoading ? <p>Detecting Java…</p> : javaError ? <p role="alert">{javaError}</p> : java.length ?

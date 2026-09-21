@@ -28,3 +28,7 @@ yarn-error.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local public auth configuration belongs under AppData, not in the checkout
+# Credentials must only be kept in the OS credential store.
+auth.json

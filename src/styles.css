@@ -145,3 +145,14 @@ button:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
 .installation-list li { border-top: 1px solid #334139; margin-top: 16px; padding-top: 12px; }
 .environment progress { width: 100%; accent-color: #65e38e; }
 .environment [role="alert"] { color: #ffb8a6; }
+
+.account-link { margin-top: 8px; padding: 0; border: 0; background: transparent; color: #65e393; cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.account-settings { border-bottom: 1px solid #2b4037; padding-bottom: 24px; margin-bottom: 24px; }
+.account-settings h2 { font-size: 24px; }
+.account-settings dl { margin: 18px 0; }
+.account-settings dt { color: #9bafa7; font-size: 13px; margin-top: 12px; }
+.account-settings dd { margin: 4px 0; overflow-wrap: anywhere; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.account-actions button { padding: 10px 14px; border: 1px solid #456052; border-radius: 8px; background: #183729; color: #edfff4; cursor: pointer; }
+.account-actions button:disabled { opacity: .5; cursor: default; }
+.account-note { color: #9bafa7; font-size: 13px; line-height: 1.6; }

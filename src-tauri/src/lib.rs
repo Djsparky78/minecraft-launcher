@@ -1,3 +1,4 @@
+mod auth;
 mod installation;
 mod java;
 mod versions;
@@ -23,7 +24,17 @@ fn launcher_status() -> &'static str {
 pub fn run() {
     tauri::Builder::default()
         .manage(installation::Jobs::default())
+        .setup(|app| {
+            let service = auth_core::AuthService::new(auth::configuration(app.handle()))
+                .map_err(|error| std::io::Error::other(error.message))?;
+            app.manage(service);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            auth::auth_restore,
+            auth::auth_sign_in,
+            auth::auth_cancel,
+            auth::auth_sign_out,
             launcher_status,
             minecraft_versions,
             detect_java,
