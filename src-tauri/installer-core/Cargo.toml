@@ -12,3 +12,6 @@ regex = "1"
 tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 fs2 = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_System_SystemServices", "Win32_Foundation", "Win32_System_SystemInformation"] }

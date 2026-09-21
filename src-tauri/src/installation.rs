@@ -30,33 +30,7 @@ fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("game"))
 }
 fn platform() -> Result<Platform, String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "amd64",
-            "x86" => "x86",
-            "aarch64" => "aarch64",
-            _ => return Err("Unsupported Windows architecture".into()),
-        };
-        // cmd's built-in ver reports the OS version used by Mojang's regex rules.
-        let output = std::process::Command::new(
-            PathBuf::from(std::env::var_os("SystemRoot").ok_or("SystemRoot is unavailable")?)
-                .join("System32/cmd.exe"),
-        )
-        .args(["/D", "/C", "ver"])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| format!("Could not detect Windows version: {e}"))?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        let version = text
-            .split(|c: char| !c.is_ascii_digit() && c != '.')
-            .find(|part| part.contains('.') && part.chars().any(|c| c.is_ascii_digit()))
-            .ok_or("Could not parse Windows version")?;
-        return Ok(Platform::windows(arch, version));
-    }
-    #[cfg(not(windows))]
-    Err("Minecraft installation currently supports Windows only.".into())
+    installer_core::platform::detect()
 }
 #[tauri::command]
 pub async fn installed_versions(app: tauri::AppHandle) -> Result<Vec<Installation>, String> {

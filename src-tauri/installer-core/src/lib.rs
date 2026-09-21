@@ -1,4 +1,5 @@
 pub mod model;
+pub mod platform;
 pub mod storage;
 use fs2::FileExt;
 use model::{

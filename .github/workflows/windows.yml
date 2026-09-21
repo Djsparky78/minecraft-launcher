@@ -19,6 +19,8 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npx tsc --noEmit
+      - name: Exercise native Windows version detection
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -p installer-core platform::tests -- --nocapture
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo test --locked --workspace --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri:build -- --no-bundle

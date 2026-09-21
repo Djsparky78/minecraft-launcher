@@ -191,3 +191,14 @@ tests use tiny local HTTP fixtures and official version JSON snapshots; they do
 not download a complete game or launch it.
 
 This project is not affiliated with Mojang Studios or Microsoft.
+
+### Windows platform detection
+
+Installation reads the native kernel version through `ntdll!RtlGetVersion` using
+Windows SDK types from `windows-sys`. It does not spawn a shell, parse localized
+text, or depend on `SystemRoot`. Windows 11 retains its actual `10.0.<build>`
+version for Mojang rule matching. The launcher process architecture still maps
+x64 to `amd64`, x86 to `x86`, and ARM64 to `aarch64`, including emulated x64 apps
+on ARM64 Windows. Detection failures report the failed API or NTSTATUS rather
+than silently guessing a version. Windows CI runs a live detection smoke test
+as well as platform-independent formatting and architecture tests.
