@@ -66,8 +66,19 @@ pub async fn inspect(path: &Path) -> Option<JavaInstallation> {
         String::from_utf8_lossy(&output.stdout)
     );
     let version = property(&text, "java.version").or_else(|| parse_version(&text))?;
+    // Resolve PATH shims through the runtime's own java.home when it points to
+    // a real executable. Preserve distinct runtimes even when versions match.
+    let runtime_path = property(&text, "java.home")
+        .map(|home| {
+            PathBuf::from(home)
+                .join("bin")
+                .join(if cfg!(windows) { "java.exe" } else { "java" })
+        })
+        .filter(|candidate| candidate.is_file())
+        .and_then(|candidate| candidate.canonicalize().ok())
+        .unwrap_or(path);
     Some(JavaInstallation {
-        path: path.to_string_lossy().into_owned(),
+        path: installer_core::display_path(&runtime_path),
         major_version: major_version(&version)?,
         vendor: property(&text, "java.vendor"),
         version,
@@ -123,6 +134,7 @@ fn candidates() -> Vec<PathBuf> {
 pub async fn detect() -> Vec<JavaInstallation> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();
+    let mut runtime_paths = HashSet::new();
     for candidate in candidates() {
         let Ok(path) = candidate.canonicalize() else {
             continue;
@@ -140,7 +152,14 @@ pub async fn detect() -> Vec<JavaInstallation> {
             continue;
         }
         if let Some(installation) = inspect(&path).await {
-            found.push(installation);
+            let key = if cfg!(windows) {
+                installation.path.to_lowercase()
+            } else {
+                installation.path.clone()
+            };
+            if runtime_paths.insert(key) {
+                found.push(installation);
+            }
         }
     }
     found

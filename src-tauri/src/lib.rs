@@ -1,3 +1,4 @@
+mod installation;
 mod java;
 mod versions;
 use tauri::Manager;
@@ -21,10 +22,14 @@ fn launcher_status() -> &'static str {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(installation::Jobs::default())
         .invoke_handler(tauri::generate_handler![
             launcher_status,
             minecraft_versions,
-            detect_java
+            detect_java,
+            installation::installed_versions,
+            installation::install_version,
+            installation::cancel_install
         ])
         .run(tauri::generate_context!())
         .expect("error while running the launcher");

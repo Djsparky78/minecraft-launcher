@@ -140,3 +140,8 @@ footer { display: flex; justify-content: space-between; margin-top: 16px; color:
 button:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
 
 .content { min-width: 0; }
+
+.installation-list { list-style: none; padding: 0; }
+.installation-list li { border-top: 1px solid #334139; margin-top: 16px; padding-top: 12px; }
+.environment progress { width: 100%; accent-color: #65e38e; }
+.environment [role="alert"] { color: #ffb8a6; }

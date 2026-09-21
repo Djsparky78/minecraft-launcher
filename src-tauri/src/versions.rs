@@ -13,6 +13,8 @@ struct Latest {
 }
 #[derive(Deserialize, Serialize)]
 pub struct Version {
+    #[serde(default)]
+    pub sha1: Option<String>,
     pub id: String,
     #[serde(rename = "type")]
     kind: String,
@@ -179,4 +181,30 @@ mod cache_tests {
         std::fs::write(path, "invalid").unwrap();
         assert!(load_from(dir.path(), offline).await.is_err());
     }
+}
+
+// Installation receives only an ID from React. URLs and hashes always come from
+// the backend-owned official manifest, including its last known good cache.
+pub async fn resolve(cache_dir: &std::path::Path, id: &str) -> Result<Version, String> {
+    installer_core::model::valid_id(id).map_err(|e| e.to_string())?;
+    if let Ok(text) = std::fs::read_to_string(cache_dir.join("version-manifest.json")) {
+        if let Ok(manifest) = parse(&text) {
+            if let Some(version) = manifest
+                .versions
+                .into_iter()
+                .find(|v| v.id == id && v.kind == "release" && v.sha1.is_some())
+            {
+                return Ok(version);
+            }
+        }
+    }
+    load(cache_dir)
+        .await?
+        .versions
+        .into_iter()
+        .find(|v| v.id == id && v.kind == "release" && v.sha1.is_some())
+        .ok_or_else(|| {
+            "Selected release has no trusted metadata hash. Refresh versions online and retry."
+                .into()
+        })
 }
